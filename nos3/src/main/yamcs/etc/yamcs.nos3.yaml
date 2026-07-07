@@ -61,19 +61,36 @@ services:
        timestampMultiplier: 1
 
 dataLinks:
+#  - name: radio-in
+#    class: org.yamcs.tctm.UdpTmDataLink
+#    stream: tm_realtime
+#    port: 6011
+#    maxLength: 2048
+#    packetPreprocessorClassName: org.yamcs.tctm.cfs.CfsPacketPreprocessor
+#    packetPreprocessorArgs:
+#      useLocalGenerationTime: true
+
   - name: radio-in
-    class: org.yamcs.tctm.UdpTmDataLink
-    stream: tm_realtime
+    class: org.yamcs.tctm.ccsds.UdpTmFrameLink
     port: 6011
-    packetPreprocessorClassName: org.yamcs.tctm.cfs.CfsPacketPreprocessor
-    packetPreprocessorArgs:
-      useLocalGenerationTime: true
+    frameType: "TM"
+    spacecraftId: 3
+    frameLength: 1786
+    errorDetection: NONE
+    virtualChannels:
+      - vcId: 1
+        service: "PACKET"
+        maxPacketLength: 2048
+        packetPreprocessorClassName: org.yamcs.tctm.cfs.CfsPacketPreprocessor
+        packetPreprocessorArgs:
+          useLocalGenerationTime: true
+        stream: tm_realtime
 
   - name: radio-out
     class: org.yamcs.tctm.UdpTcDataLink
     stream: tc_realtime
-    host: cryptolib
-    port: 6010
+    host: 192.168.20.10
+    port: 8010
     commandPostprocessorClassName: org.yamcs.tctm.cfs.CfsCommandPostprocessor
 
   - name: debug-in
@@ -87,7 +104,7 @@ dataLinks:
   - name: debug-out
     class: org.yamcs.tctm.UdpTcDataLink
     stream: tc_realtime
-    host: nos-fsw
+    host: 192.168.20.10
     port: 5012
     commandPostprocessorClassName: org.yamcs.tctm.cfs.CfsCommandPostprocessor
 

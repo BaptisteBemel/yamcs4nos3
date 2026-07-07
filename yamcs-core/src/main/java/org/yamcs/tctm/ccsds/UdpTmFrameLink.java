@@ -43,7 +43,7 @@ public class UdpTmFrameLink extends AbstractTmFrameLink implements Runnable {
     public void init(String instance, String name, YConfiguration config) throws ConfigurationException {
         super.init(instance, name, config);
         port = config.getInt("port");
-        int maxLength = frameHandler.getMaxFrameSize();
+        int maxLength = frameHandler.getMaxFrameSize() + 4;
         datagram = new DatagramPacket(new byte[maxLength], maxLength);
     }
 
@@ -82,8 +82,8 @@ public class UdpTmFrameLink extends AbstractTmFrameLink implements Runnable {
                             .arrayToHexString(datagram.getData(), datagram.getOffset(), datagram.getLength(), true));
                 }
                 dataIn(1, datagram.getLength());
-                handleFrame(timeService.getHresMissionTime(), datagram.getData(), datagram.getOffset(),
-                        datagram.getLength());
+                handleFrame(timeService.getHresMissionTime(), datagram.getData(), datagram.getOffset() + 4,
+                        datagram.getLength() - 4);
 
             } catch (IOException e) {
                 if (!isRunningAndEnabled()) {
