@@ -86,12 +86,29 @@ dataLinks:
           useLocalGenerationTime: true
         stream: tm_realtime
 
+#  - name: radio-out
+#    class: org.yamcs.tctm.UdpTcDataLink
+#    stream: tc_realtime
+#    host: 192.168.20.10
+#    port: 8010
+#    commandPostprocessorClassName: org.yamcs.tctm.cfs.CfsCommandPostprocessor
+
+    # Base Profile: TCTF encapsulation without SDLDS
   - name: radio-out
-    class: org.yamcs.tctm.UdpTcDataLink
-    stream: tc_realtime
+    class: org.yamcs.tctm.ccsds.UdpTcFrameLink
     host: 192.168.20.10
     port: 8010
-    commandPostprocessorClassName: org.yamcs.tctm.cfs.CfsCommandPostprocessor
+    spacecraftId: 3
+    maxFrameLength: 1024
+    errorDetection: NONE
+    virtualChannels:
+      - vcId: 0
+        service: PACKET
+        mapId: 1
+        multiplePacketsPerFrame: false
+        useCop1: false
+        stream: tc_realtime
+        commandPostprocessorClassName: org.yamcs.tctm.cfs.CfsCommandPostprocessor
 
   - name: debug-in
     class: org.yamcs.tctm.UdpTmDataLink
@@ -101,12 +118,12 @@ dataLinks:
     packetPreprocessorArgs:
       useLocalGenerationTime: true
       
-  - name: debug-out
-    class: org.yamcs.tctm.UdpTcDataLink
-    stream: tc_realtime
-    host: 192.168.20.10
-    port: 5012
-    commandPostprocessorClassName: org.yamcs.tctm.cfs.CfsCommandPostprocessor
+#  - name: debug-out
+#    class: org.yamcs.tctm.UdpTcDataLink
+#    stream: tc_realtime
+#    host: 192.168.20.10
+#    port: 5012
+#    commandPostprocessorClassName: org.yamcs.tctm.cfs.CfsCommandPostprocessor
 
   - name: truth42-in
     class: org.yamcs.tctm.UdpTmDataLink
