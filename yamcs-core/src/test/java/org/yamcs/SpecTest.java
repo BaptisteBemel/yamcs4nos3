@@ -15,7 +15,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.yamcs.Spec.OptionType;
-import org.yamcs.tctm.ccsds.TcManagedParameters.PriorityScheme;
+import org.yamcs.tctm.ccsds.UplinkManagedParameters.PriorityScheme;
 
 public class SpecTest {
 
@@ -86,6 +86,19 @@ public class SpecTest {
             spec.addOption("bla", OptionType.STRING)
                     .withChoices("valid", "other");
             spec.validate(of("bla", "this is wrong"));
+        });
+    }
+
+    @Test
+    public void testListChoices() throws ValidationException {
+        Spec spec = new Spec();
+        spec.addOption("bla", OptionType.LIST)
+                .withElementType(OptionType.STRING)
+                .withChoices("a", "b", "c", "d");
+        spec.validate(of("bla", asList("a", "b")));
+
+        assertThrows(ValidationException.class, () -> {
+            spec.validate(of("bla", asList("a", "b", "x")));
         });
     }
 
@@ -519,5 +532,29 @@ public class SpecTest {
         assertThrows(ValidationException.class, () -> {
             spec.validate(of("foo", 456, "bar", "test"));
         });
+    }
+
+    @Test
+    public void testConditionalMergeSpecGroups() throws ValidationException {
+        var spec = new Spec();
+        spec.addOption("type", OptionType.STRING);
+
+        var conditionSpec = new Spec();
+        conditionSpec.addOption("foo", OptionType.STRING);
+        conditionSpec.addOption("bar", OptionType.STRING);
+        conditionSpec.requireTogether("foo", "bar");
+        spec.when("type", "a").mergeSpec(conditionSpec);
+
+        conditionSpec = new Spec();
+        conditionSpec.addOption("foo", OptionType.STRING);
+        conditionSpec.addOption("baz", OptionType.STRING);
+        spec.when("type", "b").mergeSpec(conditionSpec);
+
+        // Groups of a merged spec only apply when its condition is satisfied
+        spec.validate(of("type", "b", "foo", "test", "baz", "test"));
+        assertThrows(ValidationException.class, () -> {
+            spec.validate(of("type", "a", "foo", "test"));
+        });
+        spec.validate(of("type", "a", "foo", "test", "bar", "test"));
     }
 }

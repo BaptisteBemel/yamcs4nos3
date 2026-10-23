@@ -40,6 +40,8 @@ Configuration Options
 address (string)
     The local address to which Yamcs will bind waiting for HTTP clients. If unset, Yamcs binds to a wildcard address.
 
+    If Yamcs sits behind a reverse proxy running on the same host, consider setting this to ``127.0.0.1`` (or ``::1``). This makes Yamcs unreachable from outside the host altogether, so only the proxy (and nothing else on the network) can connect to it directly. See also ``trustedProxies`` below.
+
 port (integer)
     The port to which Yamcs will bind waiting for HTTP clients. Default: ``8090``
 
@@ -55,6 +57,8 @@ tlsKey (string)
 
 contextPath (string)
     Path string prepended to all routes. For example, a contextPath of ``/yamcs`` will make the API available on ``/yamcs/api`` instead of the default ``/api``. When using this property in combination with a reverse proxy, you should ensure that the proxy path matches with the context path because rewriting may lead to unexpected results.
+
+    When deploying behind a reverse proxy that isn't running on the same host as Yamcs, also see ``trustedProxies`` below, which controls whether that proxy's forwarded headers are trusted.
 
 maxContentLength (integer)
     Maximum allowed length of request bodies. This is applied to all non-streaming API requests. Default: ``65536``
@@ -79,6 +83,18 @@ nThreads (integer)
 
 reverseLookup (boolean)
     If enabled, hostnames instead of IP addresses are used to identify clients. Use of this option may trigger name service reverse lookups. Default: ``false``
+
+maxAuthRequestsPerSecond (integer)
+    Maximum failed authentication attempts per second for a single client IP address.
+
+    Default: ``5``.
+
+trustedProxies (list of strings)
+    IP addresses or CIDR ranges (for example ``10.0.0.0/8``) of reverse proxies that Yamcs should trust. Hostnames are not supported.
+
+    When a request comes from one of these addresses, Yamcs reads its ``X-Forwarded-Proto``, ``X-Forwarded-Host`` and ``X-Forwarded-For`` headers to determine the original client's protocol, host and IP address. Requests from any other address have these headers ignored, and Yamcs uses the actual connection instead.
+
+    Default: ``["127.0.0.1", "::1"]``. A reverse proxy running on the same host as Yamcs is trusted automatically. If your reverse proxy runs on a different host or in a different container, add its address here.
 
 webSocket (map)
     Configure WebSocket properties. Detailed below. If unset, Yamcs uses sensible defaults.
@@ -111,7 +127,7 @@ CORS sub-configuration
 
 CORS (cross-origin resource sharing) facilitates use of the API in client-side applications that run in the browser. CORS is a W3C specification enforced by all major browsers. Details are described at `<https://www.w3.org/TR/cors/>`_. Yamcs simply adds configurable support for some of the CORS preflight response headers.
 
-Note that the embedded web interface of Yamcs does not need CORS enabled, because it shares the same origin as the HTTP API.
+Note that the Yamcs UI does not need CORS enabled, because it shares the same origin as the HTTP API.
 
 allowOrigin (string)
     Exact string that will be set in the ``Access-Control-Allow-Origin`` header of the preflight response.

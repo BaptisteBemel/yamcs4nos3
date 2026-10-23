@@ -9,7 +9,7 @@ export interface AuthInfo {
 
 export interface OpenIDConnectInfo {
   clientId: string;
-  authorizationEndpoint: string;
+  authorizationEndpoint?: string;
   scope: string;
 }
 
@@ -19,6 +19,10 @@ export interface TokenResponse {
   expires_in: number;
   refresh_token: string;
   user: UserInfo;
+}
+
+export interface LogoutResponse {
+  redirectUrl?: string;
 }
 
 export interface InstanceConfig {
@@ -129,12 +133,7 @@ export interface CommandOption {
 }
 
 export type ServiceState =
-  | 'NEW'
-  | 'STARTING'
-  | 'RUNNING'
-  | 'STOPPING'
-  | 'TERMINATED'
-  | 'FAILED';
+  'NEW' | 'STARTING' | 'RUNNING' | 'STOPPING' | 'TERMINATED' | 'FAILED';
 
 export type InstanceState =
   | 'OFFLINE'
@@ -424,6 +423,7 @@ export interface SystemInfo {
   revision: string;
   serverId: string;
   uptime: number;
+  cpuTime: number;
   jvm: string;
   workingDirectory: string;
   configDirectory: string;
@@ -441,6 +441,12 @@ export interface SystemInfo {
   usedMaxHeapMemory: number;
   maxNonHeapMemory: number;
   jvmThreadCount: number;
+  cpuLoad: number;
+  processCpuLoad: number;
+  freeMemory: number;
+  totalMemory: number;
+  freeSwapSpace: number;
+  totalSwapSpace: number;
   rootDirectories: RootDirectory[];
   process: ProcessInfo;
 }

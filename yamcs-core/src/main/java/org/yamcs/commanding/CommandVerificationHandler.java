@@ -133,7 +133,7 @@ public class CommandVerificationHandler implements CommandHistoryConsumer {
             collectCmdVerifiers(basecmd, cmdVerifiers, verifierOverride);
         }
 
-        for (CommandVerifier cv : cmd.getCommandVerifiers()) {
+        for (CommandVerifier cv : cmd.getCommandVerifiers(false)) {
             boolean found = false;
             for (CommandVerifier existingv : cmdVerifiers) {
                 if (existingv.getStage().equals(cv.getStage())) {
@@ -249,6 +249,9 @@ public class CommandVerificationHandler implements CommandHistoryConsumer {
             ta = cv.getOnTimeout();
             break;
         case CANCELLED:
+        case SKIPPED:
+            // a skipped verifier does not apply to this command instance: it can neither complete nor fail it,
+            // regardless of the onSuccess/onFail/onTimeout configured for this stage
             break;
         default:
             log.error("Illegal state onVerifierFinished called with state: {}", state);
@@ -294,6 +297,8 @@ public class CommandVerificationHandler implements CommandHistoryConsumer {
             return AckStatus.CANCELLED;
         case DISABLED:
             return AckStatus.DISABLED;
+        case SKIPPED:
+            return AckStatus.NA;
         default:
             throw new IllegalArgumentException("Unknown state " + state);
         }

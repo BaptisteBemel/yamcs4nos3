@@ -23,6 +23,8 @@ import org.yamcs.parameterarchive.ParameterArchive;
 import org.yamcs.web.WebPlugin;
 import org.yamcs.web.db.Query;
 import org.yamcs.web.db.QueryDb;
+import org.yamcs.web.notification.NotificationListener;
+import org.yamcs.web.notification.NotificationManager;
 import org.yamcs.yarch.SqlBuilder;
 import org.yamcs.yarch.Stream;
 import org.yamcs.yarch.StreamSubscriber;
@@ -34,6 +36,12 @@ import com.google.protobuf.Empty;
  * Extension routes to Yamcs HTTP API for use by the Web UI only.
  */
 public class WebApi extends AbstractWebApi<Context> {
+
+    private WebPlugin plugin;
+
+    public WebApi(WebPlugin plugin) {
+        this.plugin = plugin;
+    }
 
     /**
      * Get instance-level Web UI configuration options.
@@ -114,7 +122,9 @@ public class WebApi extends AbstractWebApi<Context> {
             @Override
             public void onTuple(Stream stream, Tuple tuple) {
                 var query = new Query(tuple);
-                queries.add(query);
+                if (isAccessible(ctx, query)) {
+                    queries.add(query);
+                }
             }
 
             @Override
@@ -153,7 +163,7 @@ public class WebApi extends AbstractWebApi<Context> {
     public void updateQuery(Context ctx, UpdateQueryRequest request, Observer<QueryInfo> observer) {
         var instance = InstancesApi.verifyInstance(request.getInstance());
         var db = QueryDb.getInstance(instance);
-        var query = verifyQuery(db, request.getId());
+        var query = verifyQuery(ctx, db, request.getId());
 
         if (request.hasName()) {
             query.setName(request.getName());
@@ -177,7 +187,7 @@ public class WebApi extends AbstractWebApi<Context> {
     public void deleteQuery(Context ctx, DeleteQueryRequest request, Observer<Empty> observer) {
         var instance = InstancesApi.verifyInstance(request.getInstance());
         var db = QueryDb.getInstance(instance);
-        var query = verifyQuery(db, request.getId());
+        var query = verifyQuery(ctx, db, request.getId());
 
         db.delete(query.getId());
         observer.complete(Empty.getDefaultInstance());
@@ -190,6 +200,27 @@ public class WebApi extends AbstractWebApi<Context> {
         return clientObserver;
     }
 
+    @Override
+    public void listNotifications(Context ctx, ListNotificationsRequest request,
+            Observer<ListNotificationsResponse> observer) {
+        var notificationManager = plugin.getNotificationManager();
+        var responseb = ListNotificationsResponse.newBuilder()
+                .setRuntimeId(NotificationManager.RUNTIME_ID);
+        var notifications = new ArrayList<>(notificationManager.getNotifications());
+        Collections.reverse(notifications);
+        responseb.addAllNotifications(notifications);
+        observer.complete(responseb.build());
+    }
+
+    @Override
+    public void subscribeNotifications(Context ctx, SubscribeNotificationsRequest request,
+            Observer<NotificationInfo> observer) {
+        var notificationManager = plugin.getNotificationManager();
+        NotificationListener listener = observer::next;
+        observer.setCancelHandler(() -> notificationManager.removeListener(listener));
+        notificationManager.addListener(listener);
+    }
+
     private static QueryInfo toQueryInfo(Context ctx, Query query) {
         var queryb = QueryInfo.newBuilder()
                 .setId(query.getId().toString())
@@ -199,13 +230,17 @@ public class WebApi extends AbstractWebApi<Context> {
         return queryb.build();
     }
 
-    public static Query verifyQuery(QueryDb db, String id) {
+    public static Query verifyQuery(Context ctx, QueryDb db, String id) {
         var queryId = verifyId(id);
         var query = db.getById(queryId);
-        if (query == null) {
+        if (query == null || !isAccessible(ctx, query)) {
             throw new NotFoundException("Query not found");
         }
         return query;
+    }
+
+    private static boolean isAccessible(Context ctx, Query query) {
+        return query.getUserId() == null || query.getUserId() == ctx.user.getId();
     }
 
     private static UUID verifyId(String id) {

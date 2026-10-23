@@ -75,6 +75,7 @@ dataLinks:
     port: 6011
     frameType: "TM"
     spacecraftId: 3
+    initialBytesToStrip: 4
     frameLength: 1786
     errorDetection: NONE
     virtualChannels:

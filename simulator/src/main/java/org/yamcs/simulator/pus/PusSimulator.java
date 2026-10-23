@@ -21,6 +21,7 @@ import org.yamcs.simulator.PowerHandler;
 import org.yamcs.simulator.RCSHandler;
 import org.yamcs.simulator.SimulatorCcsdsPacket;
 import org.yamcs.simulator.TcpTmTcLink;
+import org.yamcs.simulator.UdpTmFrameLink;
 
 /**
  * PUS (Packet Utilisation Standard) simulator.
@@ -37,6 +38,7 @@ import org.yamcs.simulator.TcpTmTcLink;
  * <li>ST[13] - large packet transfer - TODO</li>
  * <li>ST[15] - on-board storage and retrieval - TODO</li>
  * <li>ST[17] - test</li>
+ * <li>ST[22] - position based schedule</li>
  * <li>ST[23] - file management - TODO</li>
  * 
  * <li>
@@ -65,6 +67,7 @@ public class PusSimulator extends AbstractSimulator {
 
     ScheduledThreadPoolExecutor executor;
     TcpTmTcLink tmLink;
+    UdpTmFrameLink tmFrameLink;
 
     FlightDataHandler flightDataHandler;
     DHSHandler dhsHandler;
@@ -75,6 +78,8 @@ public class PusSimulator extends AbstractSimulator {
     Pus5Service pus5Service;
     Pus11Service pus11Service;
     Pus17Service pus17Service;
+    Pus19Service pus19Service;
+    Pus22Service pus22Service;
 
     protected BlockingQueue<PusTcPacket> pendingCommands = new ArrayBlockingQueue<>(100);
 
@@ -88,6 +93,8 @@ public class PusSimulator extends AbstractSimulator {
         pus5Service = new Pus5Service(this);
         pus11Service = new Pus11Service(this);
         pus17Service = new Pus17Service(this);
+        pus19Service = new Pus19Service(this);
+        pus22Service = new Pus22Service(this);
     }
 
     @Override
@@ -102,6 +109,7 @@ public class PusSimulator extends AbstractSimulator {
 
         pus5Service.start();
         pus11Service.start();
+        pus22Service.start();
     }
 
     private void sendFlightPacket() {
@@ -137,6 +145,13 @@ public class PusSimulator extends AbstractSimulator {
             buffer.putInt(4);
             epslvpduHandler.fillPacket(buffer.slice());
             transmitRealtimeTM(packet);
+
+            // hkid 5: ST[22] simulated orbit position
+            packet = new PusTmPacket(MAIN_APID, 4 + PusPosition.LENGTH_BYTES, PUS_TYPE_HK, 25);
+            buffer = packet.getUserDataBuffer();
+            buffer.putInt(5);
+            pus22Service.currentPosition().encode(buffer);
+            transmitRealtimeTM(packet);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -144,11 +159,24 @@ public class PusSimulator extends AbstractSimulator {
 
     void transmitRealtimeTM(PusTmPacket packet) {
         packet.fillChecksum();
-        tmLink.sendPacket(packet.getBytes());
+        if (tmLink != null) {
+            tmLink.sendPacket(packet.getBytes());
+        }
+        if (tmFrameLink != null) {
+            tmFrameLink.queuePacket(0, packet.getBytes());
+        }
     }
 
     private void sendTimePacket() {
-        tmLink.sendImmediate(new PusTmTimePacket());
+        PusTmTimePacket packet = new PusTmTimePacket();
+        if (tmLink != null) {
+            tmLink.sendImmediate(packet);
+        }
+        if (tmFrameLink != null) {
+            // the ST[9] time packet must travel on a virtual channel so the ground can associate it
+            // with a frame (and its earth reception time) for time correlation
+            tmFrameLink.queuePacket(0, packet.getBytes());
+        }
     }
 
     @Override
@@ -164,15 +192,26 @@ public class PusSimulator extends AbstractSimulator {
 
     @Override
     public void processTc(SimulatorCcsdsPacket tc) {
-        PusTcPacket pustc = (PusTcPacket) tc;
-        if (tc.getAPID() == CfdpCcsdsPacket.APID) {
-            // cfdpReceiver.processCfdp(tc.getUserDataBuffer());
-        } else {
+        if (tc instanceof PusTcPacket pustc) {
             transmitRealtimeTM(ack(pustc, 1));
             try {
                 pendingCommands.put(pustc);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+            }
+        } else {
+            if (tc.getAPID() == CfdpCcsdsPacket.APID) {
+                byte b0 = tc.getUserDataBuffer().get();
+                if ((b0 & 0x08) == 0) { // towards receiver
+                    cfdpReceiver.processCfdp(tc.getUserDataBuffer());
+                } else {// towards sender
+                    /*if (cfdpSender != null) {
+                        cfdpSender.processCfdp(tc.getUserDataBuffer());
+                    } else {*/
+                        log.warn("Received CFDP packet for sender but have no sender");
+                    // }
+                }
+                cfdpReceiver.processCfdp(tc.getUserDataBuffer());
             }
         }
     }
@@ -222,6 +261,8 @@ public class PusSimulator extends AbstractSimulator {
                 case 5 -> pus5Service.executeTc(commandPacket);
                 case 11 -> pus11Service.executeTc(commandPacket);
                 case 17 -> pus17Service.executeTc(commandPacket);
+                case 19 -> pus19Service.executeTc(commandPacket);
+                case 22 -> pus22Service.executeTc(commandPacket);
                 case 25 -> {
                     switch (commandPacket.getSubtype()) {
                     case 1 -> switchBatteryOn(commandPacket);
@@ -257,6 +298,11 @@ public class PusSimulator extends AbstractSimulator {
     @Override
     protected void setTmLink(TcpTmTcLink tmLink) {
         this.tmLink = tmLink;
+    }
+
+    @Override
+    public void setTmFrameLink(UdpTmFrameLink tmFrameLink) {
+        this.tmFrameLink = tmFrameLink;
     }
 
     @Override

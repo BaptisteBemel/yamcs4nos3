@@ -114,6 +114,9 @@ allowDownloadOverwrites (boolean)
 maxExistingFileRenames (integer)
     Maximum number appended to incoming file names in case of matching names (when ``allowDownloadOverwrites`` is false). Default: ``1000``
 
+maxFileSize (integer)
+    The maximum file size in bytes accepted for incoming transfers. If the Metadata PDU declares a file size larger than this value, or if a File Data PDU is received whose end offset exceeds this value, the transfer is aborted with a ``FileSizeError`` fault. Default: ``104857600`` (100 MB).
+
 localEntities (map)
     A list of entity definitions used to give names to the local (Yamcs) entity identifiers as well as to configure which bucket is used for storing the files received for that entity. The names can be used in the API calls when initiating transfers. The list has to contain all identifiers which will be used by the remote system to send files.  If a PDU is received to an identifier not in this map, the PDU will be dropped and no transaction will be started.
 
@@ -139,29 +142,29 @@ maxPduSize (integer)
     The maximum length in bytes of the PDU is used by the sender to determine how to split the file into segments (segment size = PDU size - header size). For the incoming transfers the peer specifies the PDU size. Default ``512``
 
 sleepBetweenPdus (integer)
-    The time in milliseconds used by the sender to wait in between sending two successive PDUs. This together with the PDU determine the uplink data rate. The data rate has to match the maximum uplink speed as well as the receiver expected data rate. No mechanism is implemented for auto-tuning the uplink rate. 
+    The time in milliseconds used by the sender to wait in between sending two successive PDUs. This together with the PDU determine the uplink data rate. The data rate has to match the maximum uplink speed as well as the receiver expected data rate. No mechanism is implemented for auto-tuning the uplink rate. The receiver also uses this value as the minimum time between two PDUs it sends (for example between the EOF ACK and the Finished PDU). Default: ``500``
 
 canChangePduSize (boolean)
     Whether a ``FileTransferOption`` can be used to set a specific transfer's PDU size. Default: ``false``
 
 pduSizePredefinedValues (list)
-    List of predefined integer values for the PDU size option when ``canChangePduSize`` is ``true``, shown as a dropdown menu in the web UI.
+    List of predefined integer values for the PDU size option when ``canChangePduSize`` is ``true``, shown as a dropdown menu in the Yamcs UI.
 
 canChangePduDelay (boolean)
     Whether a ``FileTransferOption`` can be used to set a specific transfer's PDU delay (sleep between PDUs). Default: ``false``
 
 pduDelayPredefinedValues (list)
-    List of predefined integer values for the PDU delay option when ``canChangePduDelay`` is ``true``, shown as a dropdown menu in the web UI.
+    List of predefined integer values for the PDU delay option when ``canChangePduDelay`` is ``true``, shown as a dropdown menu in the Yamcs UI.
 
 inactivityTimeout (integer)
-    The time in milliseconds used by both the sender and receiver to check for inactivity. The timer is active on the receiver until EOF has been received and on class 2 sender after EOF has been sent (while waiting for the Finished PDU). If the timer expires, the InactivityDetected event will be triggered and the transaction may be cancelled or suspended (depending on the configuration of the fault handler for InactivityDetected event).
+    The time in milliseconds used by both the sender and receiver to check for inactivity. The timer is active on the receiver until EOF has been received and on class 2 sender after the EOF ACK has been received (while waiting for the Finished PDU). If the timer expires, the InactivityDetected event will be triggered and the transaction may be cancelled or suspended (depending on the configuration of the fault handler for InactivityDetected event).
 
     Default: ``10000`` (10 seconds).
 
 eofAckTimeout (integer) 
     Valid for class 2 transfers; the time in milliseconds used by the sender to wait for the EOF PDU acknowledgment. The sender sends the EOF PDU to indicate that it has completed transmitting the file. It expects to receive an acknowledgement indicating the reception of the EOF PDU (not of the file!, the Finished PDU is used for that). The EOF PDU is retransmitted if no acknowledgment has been received in this time.
 
-    Default: ``3000`` (3 seconds).
+    Default: ``5000`` (5 seconds).
 
 eofAckLimit (integer)
     Valid for class 2 transfers; the number of times to retry sending the EOF PDU before declaring a fault. Zero means that only one PDU will be sent (no retry). Negative value means no limit. Default: ``5``.
@@ -169,7 +172,7 @@ eofAckLimit (integer)
 finAckTimeout (integer)
     The time in milliseconds used by the receiver to wait for the FIN PDU acknowledgment. The receiver sends the Finished PDU to indicate that the file has been received or that a fault has been encountered. The receiver expects the sender to acknowledge reception of this PDU and will retransmit the PDU if no acknowledgment has been received in this time.
 
-    Default: ``10000`` (10 seconds)
+    Default: ``5000`` (5 seconds)
 
 finAckLimit (integer)
      The number of times to retry sending the Finished PDU before declaring a fault. Zero means that only one PDU will be sent (no retry). Negative value means no limit. Default: ``5``.
@@ -188,6 +191,15 @@ nakLimit (integer)
     Valid for class 2 transfers; the number of times to send a NAK PDU with no data recovered before declaring a fault. A value of 1 means that one NAK is sent and if no data is recovered within the nakTimeout milliseconds, a fault will be declared. Zero or negative value means no limit. 
 
     Default: ``-1``
+
+checkAckTimeout (integer)
+    Valid for class 1 transfers; if the receiver gets the EOF PDU but the file is not yet complete, it waits for the missing data (which may arrive out of order) and checks again every ``checkAckTimeout`` milliseconds. Default: ``10000``
+
+checkAckLimit (integer)
+    Valid for class 1 transfers; the number of checks done by the receiver (see ``checkAckTimeout``) before declaring a ``CheckLimitReached`` fault. Default: ``5``
+
+ackEofWhileSuspended (boolean)
+    Valid for class 2 transfers; if true, the receiver acknowledges the EOF PDU even while the transfer is suspended. This prevents the sender from reaching its EOF ACK limit while the receiver is suspended. Default: ``true``
  
 
 senderFaultHandlers (map)
@@ -229,6 +241,9 @@ fileListingServiceArgs (map)
 automaticDirectoryListingReloads (boolean)
     Whether the CFDP Service should automatically try to send a directory listing request when a client fetches a file listing. Default: ``false``
 
+directoryListingFileName (string)
+    Name of the temporary file the remote entity writes the directory listing into before downlinking it. The default ``.dirlist.notsaved`` signals a receiver not to persist it, but some receivers reject filenames that don't match their own naming convention -- override this to a name they accept. Default: ``.dirlist.notsaved``
+
 fileListingParserClassName (string)
     Class for parsing the CFDP directory listing response files. Default: ``org.yamcs.filetransfer.BasicListingParser``
 
@@ -236,8 +251,17 @@ fileListingParserArgs (map)
     Arguments for the FileListingParser used (depends on implementation).
 
 allowConcurrentFileOverwrites (boolean)
-    If this option is true, when starting an upload, the CFDP service verifies if an upload with the same destination filename is ongoing or queued and will raise an error. This is done in order to avoid overwriting the same destination file in case multiple files are uploaded from the yamcs-web. Default: ``true``
+    If this option is false, when starting an upload, the CFDP service verifies if an upload with the same destination filename is ongoing or queued and will raise an error. This is done in order to avoid overwriting the same destination file in case multiple files are uploaded from the yamcs-web. Set it to true to disable this check. Default: ``false``
 
 pendingAfterCompletion (integer)
     Number of milliseconds to keep the incoming transaction in memory after completion. During this time, the newly received EOF PDUs belonging to the transaction are still answered. All the other PDUs belonging to the transaction are ignored. Default: ``600000`` (10 minutes).
     Consequentially if a new transfer would start with the same id (for example following an on-board computer reboot), the transfer will not be recognized as new before this timer has expired.
+
+
+checksumType (string)
+    The checksum type to use for outgoing transfers. Supported values are ``NULL`` and ``MODULAR``.
+    The checksum type for incoming transfers is read from the Metadata PDU, but only these two values are supported, anything else will cause the transfer to fail with the ``UNSUPPORTED_CHECKSUM_TYPE`` condition code.
+
+    Note: ``NULL`` is a special value in YAML, so you must enclose it in quotes when using it.
+
+    Default: ``MODULAR``

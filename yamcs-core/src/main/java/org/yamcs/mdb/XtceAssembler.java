@@ -154,12 +154,12 @@ import org.yamcs.xtce.xml.XtceStaxReader;
  */
 public class XtceAssembler {
 
-    private static final String NS_XTCE_V1_2 = "http://www.omg.org/spec/XTCE/20180204";
     private static final Log log = new Log(XtceAssembler.class);
     private static final List<String> XTCE_VERIFIER_STAGES = Arrays.asList(
             "TransferredToRange", "SentFromRange", "Received", "Accepted", "Queued", "Execution", "Complete", "Failed");
 
     boolean emitYamcsNamespace = false;
+    XtceVersion version = XtceVersion.V1_2;
     private SpaceSystem currentSpaceSystem;
     final DatatypeFactory dataTypeFactory;
 
@@ -171,6 +171,10 @@ public class XtceAssembler {
         } catch (DatatypeConfigurationException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public void setVersion(XtceVersion version) {
+        this.version = version;
     }
 
     public final String toXtce(Mdb mdb) {
@@ -251,7 +255,7 @@ public class XtceAssembler {
 
         doc.writeStartElement("SpaceSystem");
         if (emitNamespace) {
-            doc.writeDefaultNamespace(NS_XTCE_V1_2);
+            doc.writeDefaultNamespace(version.getNamespace());
         }
         writeNameDescription(doc, spaceSystem);
 
@@ -930,20 +934,27 @@ public class XtceAssembler {
     private void writeDimensionList(XMLStreamWriter doc, List<IntegerValue> size) throws XMLStreamException {
         doc.writeStartElement("DimensionList");
         for (IntegerValue iv : size) {
-            /*
-             * doc.writeStartElement("Dimension");
-             * writeIntegerValue(doc, "StartingIndex", new FixedIntegerValue(0));
-             * writeIntegerValue(doc, "EndingIndex", iv-1);
-             * doc.writeEndElement();
-             */
-
-            // the code above is commented out because we do not have a way to compute the EndIndex as size-1 for
-            // DynamicValues.
-            // The Size element is not part of XSD but it is supported by Yamcs
-            writeIntegerValue(doc, "Size", iv);
+            doc.writeStartElement("Dimension");
+            writeIntegerValue(doc, "StartingIndex", new FixedIntegerValue(0));
+            writeIntegerValue(doc, "EndingIndex", toEndingIndex(iv));
+            doc.writeEndElement();
         }
 
         doc.writeEndElement();
+    }
+
+    private static IntegerValue toEndingIndex(IntegerValue size) {
+        if (size instanceof FixedIntegerValue) {
+            return new FixedIntegerValue(((FixedIntegerValue) size).getValue() - 1);
+        } else if (size instanceof DynamicIntegerValue) {
+            DynamicIntegerValue div = (DynamicIntegerValue) size;
+            DynamicIntegerValue endingIndex = new DynamicIntegerValue(div.getDynamicInstanceRef());
+            endingIndex.setSlope(div.getSlope());
+            endingIndex.setIntercept(div.getIntercept() - 1);
+            return endingIndex;
+        } else {
+            throw new IllegalArgumentException("Unknown type " + size.getClass());
+        }
     }
 
     private void writeIntegerValue(XMLStreamWriter doc, String elementName, IntegerValue iv)
@@ -958,6 +969,16 @@ public class XtceAssembler {
             doc.writeStartElement("DynamicValue");
             DynamicIntegerValue div = (DynamicIntegerValue) iv;
             writeParameterInstanceRef(doc, ELEM_PARAMETER_INSTANCE_REF, div.getParameterInstanceRef());
+            if (div.getSlope() != 1 || div.getIntercept() != 0) {
+                doc.writeStartElement("LinearAdjustment");
+                if (div.getIntercept() != 0) {
+                    doc.writeAttribute("intercept", Long.toString(div.getIntercept()));
+                }
+                if (div.getSlope() != 1) {
+                    doc.writeAttribute("slope", Long.toString(div.getSlope()));
+                }
+                doc.writeEndElement();
+            }
             doc.writeEndElement();
         }
 
@@ -1296,9 +1317,9 @@ public class XtceAssembler {
         if (command.getCommandContainer() != null) {
             writeCommandContainer(doc, command.getCommandContainer());
         }
-        if (command.hasTransmissionConstraints()) {
+        if (command.hasTransmissionConstraints(false)) {
             doc.writeStartElement("TransmissionConstraintList");
-            for (TransmissionConstraint constraint : command.getTransmissionConstraintList()) {
+            for (TransmissionConstraint constraint : command.getTransmissionConstraints(false)) {
                 writeTransmissionConstraint(doc, constraint);
             }
             doc.writeEndElement();
@@ -1307,9 +1328,9 @@ public class XtceAssembler {
             writeSignificance(doc, command.getDefaultSignificance(), "DefaultSignificance");
         }
 
-        if (command.hasCommandVerifiers()) {
+        if (command.hasCommandVerifiers(false)) {
             doc.writeStartElement("VerifierSet");
-            for (CommandVerifier verifier : command.getCommandVerifiers()) {
+            for (CommandVerifier verifier : command.getCommandVerifiers(false)) {
                 writeCommandVerifier(doc, verifier);
             }
             doc.writeEndElement();

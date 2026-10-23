@@ -22,6 +22,7 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,8 +85,11 @@ public class HandlerContext {
      * @return a url of the form [protocol]://[host]:[port][context]
      */
     public String getRequestBaseURL() {
+        var httpServer = getHttpServer();
+        boolean trustedProxy = httpServer.isTrustedProxy(nettyContext.channel().remoteAddress());
+
         boolean tls = nettyContext.channel().pipeline().get(SslHandler.class) != null;
-        String forwardedProto = nettyRequest.headers().get("x-forwarded-proto");
+        String forwardedProto = trustedProxy ? nettyRequest.headers().get("x-forwarded-proto") : null;
         if ("https".equals(forwardedProto)) {
             tls = true;
         }
@@ -93,7 +97,7 @@ public class HandlerContext {
         String host;
         int port = tls ? 443 : 80;
 
-        String hostURL = nettyRequest.headers().get("x-forwarded-host");
+        String hostURL = trustedProxy ? nettyRequest.headers().get("x-forwarded-host") : null;
         if (hostURL == null) {
             hostURL = nettyRequest.headers().get(HOST);
         }
@@ -120,13 +124,12 @@ public class HandlerContext {
     }
 
     public String getOriginalHostAddress() {
-        var forwardedFor = nettyRequest.headers().get("x-forwarded-for");
-        if (forwardedFor != null) {
-            return forwardedFor;
-        } else {
-            var address = (InetSocketAddress) nettyContext.channel().remoteAddress();
-            return address.getAddress().getHostAddress();
-        }
+        var address = (InetSocketAddress) nettyContext.channel().remoteAddress();
+        return getHttpServer().getOriginalHostAddress(address, nettyRequest);
+    }
+
+    public HttpServer getHttpServer() {
+        return nettyContext.channel().attr(HttpRequestHandler.CTX_HTTP_SERVER).get();
     }
 
     public String getOriginalHostName() {
@@ -289,6 +292,15 @@ public class HandlerContext {
             return null;
         } else {
             return matches.get(0);
+        }
+    }
+
+    public List<String> getQueryParameterArray(String parameter) {
+        List<String> matches = qsDecoder.parameters().get(parameter);
+        if (matches == null) {
+            return Collections.emptyList();
+        } else {
+            return matches;
         }
     }
 

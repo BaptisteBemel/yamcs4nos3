@@ -18,6 +18,7 @@ import {
   GetActivityLogResponse,
   GlobalActivityStatus,
   GlobalActivityStatusSubscription,
+  ScriptRunnersPage,
   StartActivityOptions,
   SubscribeActivitiesRequest,
   SubscribeActivityLogRequest,
@@ -78,12 +79,12 @@ import {
   InstanceTemplatesWrapper,
   InstancesWrapper,
   LinksWrapper,
+  MeanSamplesWrapper,
   ProcessorsWrapper,
   RangesWrapper,
   RecordsWrapper,
   RocksDbDatabasesWrapper,
   RolesWrapper,
-  SamplesWrapper,
   ServicesWrapper,
   SessionsWrapper,
   SourcesWrapper,
@@ -131,6 +132,7 @@ import {
   CreateProcessorRequest,
   DownloadPacketsOptions,
   DownloadParameterValuesOptions,
+  DownsampleMeanOptions,
   EditReplayProcessorRequest,
   ExecutorInfo,
   ExportParameterValuesOptions,
@@ -138,17 +140,16 @@ import {
   GetCompletenessIndexOptions,
   GetPacketsOptions,
   GetParameterRangesOptions,
-  GetParameterSamplesOptions,
   GetParameterValuesOptions,
   IndexGroup,
   IssueCommandOptions,
   IssueCommandResponse,
   ListPacketsResponse,
+  MeanSample,
   Packet,
   ParameterData,
   ParameterValue,
   Range,
-  Sample,
   StartProcedureOptions,
   StreamCommandIndexOptions,
   StreamCompletenessIndexOptions,
@@ -176,6 +177,7 @@ import {
   SubscribeAlgorithmStatusRequest,
   SubscribeBackfillingData,
   SubscribeBackfillingRequest,
+  SubscribeItemChangesRequest,
   SubscribeParametersData,
   SubscribeParametersRequest,
   SubscribeProcessorsRequest,
@@ -190,6 +192,7 @@ import {
   SubscribeQueueEventsRequest,
   SubscribeQueueStatisticsRequest,
 } from './types/queue';
+import { SdlsLinkConfig, SdlsSa, SdlsSeqCtr } from './types/sdls';
 import { SessionEvent, SessionSubscription } from './types/session';
 import {
   AuditRecordsPage,
@@ -223,6 +226,7 @@ import {
   ListServiceAccountsResponse,
   ListThreadsResponse,
   ListTopicsResponse,
+  LogoutResponse,
   ReplicationInfo,
   ReplicationInfoSubscription,
   ResultSet,
@@ -248,10 +252,10 @@ import {
 } from './types/table';
 import { SubscribeTimeRequest, Time, TimeSubscription } from './types/time';
 import {
-  CreateTimelineBandRequest,
-  CreateTimelineItemRequest,
   CreateTimelineViewRequest,
   GetTimelineItemsOptions,
+  SaveTimelineBandRequest,
+  SaveTimelineItemRequest,
   TimelineBand,
   TimelineBandsPage,
   TimelineItem,
@@ -259,18 +263,20 @@ import {
   TimelineTagsPage,
   TimelineView,
   TimelineViewsPage,
-  UpdateTimelineBandRequest,
-  UpdateTimelineItemRequest,
   UpdateTimelineViewRequest,
 } from './types/timeline';
 import {
   CreateQueryRequest,
   EditQueryRequest,
+  ListNotificationsResponse,
   ListQueriesResponse,
+  Notification,
+  NotificationSubscription,
   ParseFilterData,
   ParseFilterRequest,
   ParseFilterSubscription,
   Query,
+  SubscribeNotificationsRequest,
 } from './types/web';
 
 export default class YamcsClient implements HttpHandler {
@@ -355,6 +361,25 @@ export default class YamcsClient implements HttpHandler {
 
   public clearAccessToken() {
     this.accessToken = undefined;
+  }
+
+  /**
+   * End the session associated with the given refresh token.
+   */
+  async logout(refreshToken: string) {
+    const headers = new Headers();
+    headers.append('Content-Type', 'application/x-www-form-urlencoded');
+    const response = await fetch(`${this.authUrl}/logout`, {
+      method: 'POST',
+      headers,
+      body: `refresh_token=${encodeURIComponent(refreshToken)}`,
+    });
+
+    if (response.status >= 200 && response.status < 300) {
+      return (await response.json()) as LogoutResponse;
+    } else {
+      return Promise.reject(new HttpError(response));
+    }
   }
 
   private async doFetchAccessToken(body: string) {
@@ -515,6 +540,12 @@ export default class YamcsClient implements HttpHandler {
     });
   }
 
+  async getNotifications(): Promise<ListNotificationsResponse> {
+    const url = `${this.apiUrl}/web/notifications`;
+    const response = await this.doFetch(url);
+    return (await response.json()) as ListNotificationsResponse;
+  }
+
   async getDatabases(): Promise<Database[]> {
     const url = `${this.apiUrl}/databases`;
     const response = await this.doFetch(url);
@@ -664,31 +695,43 @@ export default class YamcsClient implements HttpHandler {
     return (await response.json()) as TimelineItem;
   }
 
-  async createTimelineBand(
-    instance: string,
-    options: CreateTimelineBandRequest,
-  ) {
-    const body = JSON.stringify(options);
-    const url = `${this.apiUrl}/timeline/${instance}/bands`;
-    const response = await this.doFetch(url, {
-      body,
-      method: 'POST',
-    });
-    return (await response.json()) as TimelineBand;
+  async startTimelineItem(instance: string, id: string) {
+    const url = `${this.apiUrl}/timeline/${instance}/items/${id}:startActivity`;
+    const response = await this.doFetch(url, { method: 'POST' });
+    return (await response.json()) as TimelineItem;
   }
 
-  async updateTimelineBand(
+  async cancelTimelineItem(instance: string, id: string) {
+    const url = `${this.apiUrl}/timeline/${instance}/items/${id}:cancelActivity`;
+    return await this.doFetch(url, { method: 'POST' });
+  }
+
+  async abortTimelineItem(instance: string, id: string) {
+    const url = `${this.apiUrl}/timeline/${instance}/items/${id}:abortActivity`;
+    return await this.doFetch(url, { method: 'POST' });
+  }
+
+  async saveTimelineBand(
     instance: string,
-    id: string,
-    options: UpdateTimelineBandRequest,
+    id: string | null,
+    options: SaveTimelineBandRequest,
   ) {
     const body = JSON.stringify(options);
-    const url = `${this.apiUrl}/timeline/${instance}/bands/${id}`;
-    const response = await this.doFetch(url, {
-      body,
-      method: 'PUT',
-    });
-    return (await response.json()) as TimelineBand;
+    if (id) {
+      const url = `${this.apiUrl}/timeline/${instance}/bands/${id}`;
+      const response = await this.doFetch(url, {
+        body,
+        method: 'PUT',
+      });
+      return (await response.json()) as TimelineBand;
+    } else {
+      const url = `${this.apiUrl}/timeline/${instance}/bands`;
+      const response = await this.doFetch(url, {
+        body,
+        method: 'POST',
+      });
+      return (await response.json()) as TimelineBand;
+    }
   }
 
   async deleteTimelineBand(instance: string, id: string) {
@@ -698,10 +741,7 @@ export default class YamcsClient implements HttpHandler {
     });
   }
 
-  async createTimelineItem(
-    instance: string,
-    options: CreateTimelineItemRequest,
-  ) {
+  async createTimelineItem(instance: string, options: SaveTimelineItemRequest) {
     const body = JSON.stringify(options);
     const url = `${this.apiUrl}/timeline/${instance}/items`;
     const response = await this.doFetch(url, {
@@ -714,7 +754,7 @@ export default class YamcsClient implements HttpHandler {
   async updateTimelineItem(
     instance: string,
     id: string,
-    options: UpdateTimelineItemRequest,
+    options: SaveTimelineItemRequest,
   ) {
     const body = JSON.stringify(options);
     const url = `${this.apiUrl}/timeline/${instance}/items/${id}`;
@@ -930,6 +970,17 @@ export default class YamcsClient implements HttpHandler {
     );
   }
 
+  createNotificationSubscription(
+    options: SubscribeNotificationsRequest,
+    observer: (notification: Notification) => void,
+  ): NotificationSubscription {
+    return this.webSocketClient!.createSubscription(
+      'web.notifications',
+      options,
+      observer,
+    );
+  }
+
   createClearanceSubscription(
     observer: (clearance: Clearance) => void,
   ): ClearanceSubscription {
@@ -942,6 +993,17 @@ export default class YamcsClient implements HttpHandler {
   ): ProcessorSubscription {
     return this.webSocketClient!.createSubscription(
       'processors',
+      options,
+      observer,
+    );
+  }
+
+  createItemChangesSubscription(
+    options: SubscribeItemChangesRequest,
+    observer: () => void,
+  ) {
+    return this.webSocketClient!.createSubscription(
+      'timeline-item-changes',
       options,
       observer,
     );
@@ -1299,7 +1361,7 @@ export default class YamcsClient implements HttpHandler {
   }
 
   async deleteQuery(instance: string, resource: string, queryId: string) {
-    const url = `${this.apiUrl}/queries/${instance}/${resource}/${queryId}`;
+    const url = `${this.apiUrl}/web/queries/${instance}/${resource}/${queryId}`;
     return await this.doFetch(url, {
       method: 'DELETE',
     });
@@ -1557,7 +1619,8 @@ export default class YamcsClient implements HttpHandler {
     qualifiedName: string,
     options: GetAlarmsOptions = {},
   ) {
-    const url = `${this.apiUrl}/archive/${instance}/alarms${qualifiedName}`;
+    const encodedName = this.encodeParameterName(qualifiedName);
+    const url = `${this.apiUrl}/archive/${instance}/alarms${encodedName}`;
     const response = await this.doFetch(url + this.queryString(options));
     const wrapper = (await response.json()) as AlarmsWrapper;
     return (await wrapper.alarms) || [];
@@ -1875,7 +1938,8 @@ export default class YamcsClient implements HttpHandler {
     qualifiedName: string,
     options: GetParameterValuesOptions = {},
   ): Promise<ParameterValue[]> {
-    const url = `${this.apiUrl}/archive/${instance}/parameters${qualifiedName}`;
+    const encodedName = this.encodeParameterName(qualifiedName);
+    const url = `${this.apiUrl}/archive/${instance}/parameters${encodedName}`;
     const response = await this.doFetch(url + this.queryString(options));
     const wrapper = (await response.json()) as ParameterData;
     return wrapper.parameter || [];
@@ -1991,7 +2055,7 @@ export default class YamcsClient implements HttpHandler {
     qualifiedName: string,
     text: string,
   ) {
-    const url = `${this.apiUrl}/mdb/${instance}/${processorName}/algorithms${qualifiedName}`;
+    const url = `${this.apiUrl}/mdb-overrides/${instance}/${processorName}/algorithms${qualifiedName}`;
     return this.doFetch(url, {
       body: JSON.stringify({
         action: 'SET',
@@ -2016,7 +2080,7 @@ export default class YamcsClient implements HttpHandler {
     processorName: string,
     qualifiedName: string,
   ) {
-    const url = `${this.apiUrl}/mdb/${instance}/${processorName}/algorithms${qualifiedName}`;
+    const url = `${this.apiUrl}/mdb-overrides/${instance}/${processorName}/algorithms${qualifiedName}`;
     return this.doFetch(url, {
       body: JSON.stringify({
         action: 'RESET',
@@ -2025,14 +2089,15 @@ export default class YamcsClient implements HttpHandler {
     });
   }
 
-  async getParameterSamples(
+  async downsampleMean(
     instance: string,
     qualifiedName: string,
-    options: GetParameterSamplesOptions = {},
-  ): Promise<Sample[]> {
-    const url = `${this.apiUrl}/archive/${instance}/parameters${qualifiedName}/samples`;
+    options: DownsampleMeanOptions = {},
+  ): Promise<MeanSample[]> {
+    const encodedName = this.encodeParameterName(qualifiedName);
+    const url = `${this.apiUrl}/archive/${instance}/parameters${encodedName}/samples`;
     const response = await this.doFetch(url + this.queryString(options));
-    const wrapper = (await response.json()) as SamplesWrapper;
+    const wrapper = (await response.json()) as MeanSamplesWrapper;
     return wrapper.sample || [];
   }
 
@@ -2041,7 +2106,8 @@ export default class YamcsClient implements HttpHandler {
     qualifiedName: string,
     options: GetParameterRangesOptions = {},
   ): Promise<Range[]> {
-    const url = `${this.apiUrl}/archive/${instance}/parameters${qualifiedName}/ranges`;
+    const encodedName = this.encodeParameterName(qualifiedName);
+    const url = `${this.apiUrl}/archive/${instance}/parameters${encodedName}/ranges`;
     const response = await this.doFetch(url + this.queryString(options));
     const wrapper = (await response.json()) as RangesWrapper;
     return wrapper.range || [];
@@ -2100,6 +2166,16 @@ export default class YamcsClient implements HttpHandler {
     return wrapper.logs || [];
   }
 
+  async addActivityLogMessage(
+    instance: string,
+    activityId: string,
+    message: string,
+  ) {
+    const url = `${this.apiUrl}/activities/${instance}/activities/${activityId}/log`;
+    const body = JSON.stringify({ message });
+    return await this.doFetch(url, { method: 'POST', body });
+  }
+
   async startActivity(instance: string, options: StartActivityOptions) {
     const url = `${this.apiUrl}/activities/${instance}/activities`;
     const body = JSON.stringify(options);
@@ -2139,9 +2215,16 @@ export default class YamcsClient implements HttpHandler {
     return wrapper.executors || [];
   }
 
-  async getActivityScripts(instance: string) {
-    const url = `${this.apiUrl}/activities/${instance}/scripts`;
+  async getScriptRunners(instance: string) {
+    const url = `${this.apiUrl}/activities/${instance}/script-runners`;
     const response = await this.doFetch(url);
+    return (await response.json()) as ScriptRunnersPage;
+  }
+
+  async getActivityScripts(instance: string, runner: string) {
+    const qs = this.queryString({ runner });
+    const url = `${this.apiUrl}/activities/${instance}/scripts${qs}`;
+    const response = await this.doFetch(url, {});
     return (await response.json()) as ActivityScriptsPage;
   }
 
@@ -2251,6 +2334,48 @@ export default class YamcsClient implements HttpHandler {
     );
   }
 
+  async getSdlsSpis(instance: string, link: string) {
+    const url = `${this.apiUrl}/sdls/${instance}/${link}`;
+    const response = await this.doFetch(url);
+    return (await response.json()) as SdlsLinkConfig;
+  }
+
+  async getSdlsSa(instance: string, link: string, spi: number) {
+    const url = `${this.apiUrl}/sdls/${instance}/${link}/${spi}`;
+    const response = await this.doFetch(url);
+    return (await response.json()) as SdlsSa;
+  }
+
+  async getSdlsSeqCtr(instance: string, link: string, spi: number) {
+    const url = `${this.apiUrl}/sdls/${instance}/${link}/${spi}/seq`;
+    const response = await this.doFetch(url);
+    return (await response.json()) as SdlsSeqCtr;
+  }
+
+  async setSdlsSeqCtr(
+    instance: string,
+    link: string,
+    spi: number,
+    seqCtr: string,
+  ) {
+    const body = JSON.stringify({ seq: seqCtr });
+    const url = `${this.apiUrl}/sdls/${instance}/${link}/${spi}/seq`;
+    const response = await this.doFetch(url, {
+      body,
+      method: 'PUT',
+    });
+  }
+
+  async setSdlsKey(instance: string, link: string, spi: number, key: File) {
+    const url = `${this.apiUrl}/sdls/${instance}/${link}/${spi}/key`;
+    const formData = new FormData();
+    formData.append('content', key);
+    const response = await this.doFetch(url, {
+      body: formData,
+      method: 'PUT',
+    });
+  }
+
   async getCop1Config(instance: string, link: string) {
     const url = `${this.apiUrl}/cop1/${instance}/${link}/config`;
     const response = await this.doFetch(url);
@@ -2284,13 +2409,9 @@ export default class YamcsClient implements HttpHandler {
 
   async doFetch(url: string, init?: RequestInit) {
     if (this.accessToken) {
-      if (!init) {
-        init = { headers: new Headers() };
-      } else if (!init.headers) {
-        init.headers = new Headers();
-      }
-      const headers = new Headers(init.headers);
-      headers.append('Authorization', `Bearer ${this.accessToken}`);
+      const headers = new Headers(init?.headers);
+      headers.set('Authorization', `Bearer ${this.accessToken}`);
+      init = { ...init, headers };
     }
 
     let response: Response;

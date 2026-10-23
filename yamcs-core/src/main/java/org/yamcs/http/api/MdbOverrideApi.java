@@ -15,11 +15,14 @@ import org.yamcs.algorithms.AlgorithmTextListener;
 import org.yamcs.api.Observer;
 import org.yamcs.http.BadRequestException;
 import org.yamcs.http.Context;
+import org.yamcs.http.ForbiddenException;
+import org.yamcs.http.MethodNotAllowedException;
 import org.yamcs.http.api.XtceToGpbAssembler.DetailLevel;
 import org.yamcs.logging.Log;
+import org.yamcs.mdb.Mdb;
+import org.yamcs.mdb.MdbFactory;
 import org.yamcs.mdb.ParameterTypeListener;
 import org.yamcs.mdb.ProcessorData;
-import org.yamcs.mdb.MdbFactory;
 import org.yamcs.protobuf.AbstractMdbOverrideApi;
 import org.yamcs.protobuf.AlgorithmTextOverride;
 import org.yamcs.protobuf.GetAlgorithmOverridesRequest;
@@ -42,7 +45,6 @@ import org.yamcs.xtce.EnumeratedParameterType;
 import org.yamcs.xtce.NumericParameterType;
 import org.yamcs.xtce.Parameter;
 import org.yamcs.xtce.ParameterType;
-import org.yamcs.mdb.Mdb;
 
 import com.google.protobuf.Empty;
 
@@ -61,6 +63,9 @@ public class MdbOverrideApi extends AbstractMdbOverrideApi<Context> {
         if (l.size() == 1) {
             AlgorithmManager algorithmManager = l.get(0);
             for (CustomAlgorithm algorithm : algorithmManager.getAlgorithmOverrides()) {
+                if (!MdbApi.hasReadAlgorithmPrivilege(ctx.user, algorithm)) {
+                    continue;
+                }
                 var overrideb = MdbOverrideInfo.newBuilder()
                         .setType(OverrideType.ALGORITHM_TEXT)
                         .setAlgorithmTextOverride(toAlgorithmTextOverride(algorithm, algorithm.getAlgorithmText()));
@@ -70,6 +75,9 @@ public class MdbOverrideApi extends AbstractMdbOverrideApi<Context> {
 
         ProcessorData pdata = processor.getProcessorData();
         for (var entry : pdata.getParameterTypeOverrides().entrySet()) {
+            if (!MdbApi.hasReadParameterDefinitionPrivilege(ctx.user, entry.getKey())) {
+                continue;
+            }
             var overrideb = MdbOverrideInfo.newBuilder()
                     .setType(OverrideType.PARAMETER)
                     .setParameterOverride(toParameterOverride(entry.getKey(), entry.getValue()));
@@ -84,7 +92,7 @@ public class MdbOverrideApi extends AbstractMdbOverrideApi<Context> {
             Observer<ParameterOverride> observer) {
         Processor processor = ProcessingApi.verifyProcessor(request.getInstance(), request.getProcessor());
         Mdb mdb = MdbFactory.getInstance(processor.getInstance());
-        Parameter parameter = MdbApi.verifyParameter(ctx, mdb, request.getName());
+        Parameter parameter = MdbApi.verifyParameterDefinitionWithId(ctx, mdb, request.getName()).getParameter();
 
         ProcessorData pdata = processor.getProcessorData();
 
@@ -119,6 +127,9 @@ public class MdbOverrideApi extends AbstractMdbOverrideApi<Context> {
         Processor processor = ProcessingApi.verifyProcessor(request.getInstance(), request.getProcessor());
         Mdb mdb = MdbFactory.getInstance(processor.getInstance());
         Algorithm algorithm = MdbApi.verifyAlgorithm(mdb, request.getName());
+        if (!MdbApi.hasReadAlgorithmPrivilege(ctx.user, algorithm)) {
+            throw new ForbiddenException("Insufficient privileges");
+        }
 
         GetAlgorithmOverridesResponse.Builder responseb = GetAlgorithmOverridesResponse.newBuilder();
 
@@ -146,6 +157,7 @@ public class MdbOverrideApi extends AbstractMdbOverrideApi<Context> {
         ctx.checkSystemPrivilege(SystemPrivilege.ChangeMissionDatabase);
 
         Processor processor = ProcessingApi.verifyProcessor(request.getInstance(), request.getProcessor());
+
         List<AlgorithmManager> l = processor.getServices(AlgorithmManager.class);
         if (l.size() == 0) {
             throw new BadRequestException("No AlgorithmManager available for this processor");
@@ -161,6 +173,10 @@ public class MdbOverrideApi extends AbstractMdbOverrideApi<Context> {
             throw new BadRequestException("Can only patch CustomAlgorithm instances");
         }
         CustomAlgorithm calg = (CustomAlgorithm) a;
+
+        if (!processor.getConfig().isOverrideAlgorithmsEnabled()) {
+            throw new MethodNotAllowedException("Capability to update algorithms is not enabled");
+        }
 
         switch (request.getAction()) {
         case RESET:
@@ -267,6 +283,7 @@ public class MdbOverrideApi extends AbstractMdbOverrideApi<Context> {
     @Override
     public void subscribeMdbChanges(Context ctx, SubscribeMdbChangesRequest request,
             Observer<MdbOverrideInfo> observer) {
+        ctx.checkSystemPrivilege(SystemPrivilege.GetMissionDatabase);
         var processor = ProcessingApi.verifyProcessor(request.getInstance(), request.getProcessor());
         var pdata = processor.getProcessorData();
 

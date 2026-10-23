@@ -66,6 +66,7 @@ public class HttpRequestHandler extends ChannelInboundHandlerAdapter {
 
     public static final String ANY_PATH = "*";
 
+    public static final AttributeKey<HttpServer> CTX_HTTP_SERVER = AttributeKey.valueOf("httpServer");
     public static final AttributeKey<String> CTX_CONTEXT_PATH = AttributeKey.valueOf("contextPath");
     public static final AttributeKey<HttpRequest> CTX_HTTP_REQUEST = AttributeKey.valueOf("httpRequest");
     public static final AttributeKey<String> CTX_USERNAME = AttributeKey.valueOf("username");
@@ -86,6 +87,7 @@ public class HttpRequestHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
         httpServer.trackClientChannel(ctx.channel());
+        ctx.channel().attr(CTX_HTTP_SERVER).set(httpServer);
         super.channelActive(ctx);
     }
 
@@ -103,20 +105,22 @@ public class HttpRequestHandler extends ChannelInboundHandlerAdapter {
         if (msg instanceof HttpRequest) {
             HttpRequest req = (HttpRequest) msg;
 
+            logUntrustedForwardedHeaders(ctx, req);
+
             // We have this also on info level coupled with the HTTP response status
             // code, but this is on debug for an earlier reporting while debugging issues
-            log.debug("{} {} {}", ctx.channel().id().asShortText(), req.method(), req.uri());
+            log.debug("{} {} {}", ctx.channel().id().asShortText(), req.method(), HttpUtils.redactUri(req.uri()));
 
             try {
                 handleRequest(ctx, req);
             } catch (InternalServerErrorException e) {
-                log.error(req.uri(), e);
+                log.error(HttpUtils.redactUri(req.uri()), e);
                 sendPlainTextError(ctx, req, e.getStatus(), e.getMessage());
             } catch (HttpException e) {
-                log.warn("{}: {}", req.uri(), e.getMessage());
+                log.warn("{}: {}", HttpUtils.redactUri(req.uri()), e.getMessage());
                 sendPlainTextError(ctx, req, e.getStatus(), e.getMessage());
             } catch (Throwable t) {
-                log.error(req.uri(), t);
+                log.error(HttpUtils.redactUri(req.uri()), t);
                 sendPlainTextError(ctx, req, HttpResponseStatus.INTERNAL_SERVER_ERROR);
             }
 
@@ -130,6 +134,30 @@ public class HttpRequestHandler extends ChannelInboundHandlerAdapter {
             log.error("{} unexpected message received: {}", ctx.channel().id().asShortText(), msg);
             ReferenceCountUtil.release(msg);
         }
+    }
+
+    private void logUntrustedForwardedHeaders(ChannelHandlerContext ctx, HttpRequest req) {
+        var remoteAddress = ctx.channel().remoteAddress();
+        if (!httpServer.isTrustedProxy(remoteAddress)) {
+            if (hasForwardedHeaders(req)) {
+                log.warn("{} Ignoring X-Forwarded-* headers from {}, which is not a configured trusted proxy",
+                        ctx.channel().id().asShortText(), remoteAddress);
+            }
+            return;
+        }
+
+        String forwardedFor = req.headers().get("x-forwarded-for");
+        if (forwardedFor != null && httpServer.hasUntrustedForwardedForHop(forwardedFor)) {
+            log.warn("{} X-Forwarded-For chain '{}' from trusted proxy {} contains an untrusted hop;"
+                    + " the chain up to and including that hop is discarded",
+                    ctx.channel().id().asShortText(), forwardedFor, remoteAddress);
+        }
+    }
+
+    private static boolean hasForwardedHeaders(HttpRequest req) {
+        var headers = req.headers();
+        return headers.contains("x-forwarded-for") || headers.contains("x-forwarded-proto")
+                || headers.contains("x-forwarded-host");
     }
 
     private void handleRequest(ChannelHandlerContext ctx, HttpRequest req) throws IOException {
@@ -242,11 +270,13 @@ public class HttpRequestHandler extends ChannelInboundHandlerAdapter {
         boolean keepAlive = HttpUtil.isKeepAlive(req);
 
         if (100 <= status && status < 400) { // Information, Success, or Redirection
-            log.info("{} {} {} {}", ctx.channel().id().asShortText(), req.method(), req.uri(), status);
+            log.info("{} {} {} {}", ctx.channel().id().asShortText(), req.method(), HttpUtils.redactUri(req.uri()),
+                    status);
         } else { // Client error or server error
             keepAlive = false;
             if (req != null) {
-                log.warn("{} {} {} {}", ctx.channel().id().asShortText(), req.method(), req.uri(), status);
+                log.warn("{} {} {} {}", ctx.channel().id().asShortText(), req.method(),
+                        HttpUtils.redactUri(req.uri()), status);
             } else {
                 log.warn("{} malformed or illegal request. Sending back {}", ctx.channel().id().asShortText(), status);
             }

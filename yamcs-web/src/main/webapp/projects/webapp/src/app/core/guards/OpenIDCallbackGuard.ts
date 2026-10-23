@@ -1,4 +1,4 @@
-import { Injectable, inject } from '@angular/core';
+import { Service, inject } from '@angular/core';
 import { ActivatedRouteSnapshot, CanActivateFn, Router } from '@angular/router';
 import { AuthService, utils } from '@yamcs/webapp-sdk';
 
@@ -8,12 +8,10 @@ export const openIDCallbackGuardFn: CanActivateFn = (
   return inject(OpenIDCallbackGuard).canActivate(route);
 };
 
-@Injectable({ providedIn: 'root' })
+@Service()
 class OpenIDCallbackGuard {
-  constructor(
-    private authService: AuthService,
-    private router: Router,
-  ) {}
+  private authService = inject(AuthService);
+  private router = inject(Router);
 
   async canActivate(route: ActivatedRouteSnapshot) {
     const oidcState = route.queryParamMap.get('state');
@@ -23,11 +21,32 @@ class OpenIDCallbackGuard {
 
     if (!oidcCode) {
       console.error('Unexpected callback. Could not find query param: "code"');
+      this.router.navigate(['/login-failed'], {
+        state: {
+          message:
+            route.queryParamMap.get('error_description') ??
+            route.queryParamMap.get('error'),
+          next: oidcState ? utils.fromBase64URL(oidcState) : undefined,
+        },
+      });
       return false;
     }
 
     // Exchange our upstream code for a Yamcs-level access token.
-    await this.authService.loginWithAuthorizationCode(oidcCode);
+    try {
+      await this.authService.loginWithAuthorizationCode(oidcCode);
+    } catch (err: any) {
+      // Do not redirect to the login page automatically. If the login
+      // keeps failing, that would loop.
+      console.error('Failed to exchange authorization code', err);
+      this.router.navigate(['/login-failed'], {
+        state: {
+          message: err?.message,
+          next: oidcState ? utils.fromBase64URL(oidcState) : undefined,
+        },
+      });
+      return false;
+    }
 
     // At this point, everything worked. Yamcs cookies are in place. And we
     // can navigate the user to the original attempted URL.

@@ -223,6 +223,10 @@
 			<Parameter parameterTypeRef="engbool" initialValue="False" name="AllowCriticalTC2">
 				<ParameterProperties dataSource="local" />
 			</Parameter>
+			<!-- ST[22] simulated orbit position (not an ECSS-defined report, a simulator convenience -
+			     see PusSimulator.sendHkTm(), hkid=5) -->
+			<Parameter parameterTypeRef="/PUS22/OrbitNumberType" name="OrbitNumber" />
+			<Parameter parameterTypeRef="/PUS22/OrbitAngleType" name="OrbitAngle" />
 		</ParameterSet>
 		<ContainerSet>
 			<SequenceContainer name="FlightData">
@@ -507,15 +511,31 @@
 					</RestrictionCriteria>
 				</BaseContainer>
 			</SequenceContainer>
+			<SequenceContainer name="OrbitPosition">
+				<AncillaryDataSet>
+					<AncillaryData name="Yamcs" mimeType="text/plain">UseAsArchivingPartition</AncillaryData>
+				</AncillaryDataSet>
+				<EntryList>
+					<ParameterRefEntry parameterRef="OrbitNumber" />
+					<ParameterRefEntry parameterRef="OrbitAngle" />
+				</EntryList>
+				<BaseContainer containerRef="../PUS/hk25">
+					<RestrictionCriteria>
+						<ComparisonList>
+							<Comparison parameterRef="../PUS/hkid" value="5" />
+						</ComparisonList>
+					</RestrictionCriteria>
+				</BaseContainer>
+			</SequenceContainer>
 		</ContainerSet>
 	</TelemetryMetaData>
 	<CommandMetaData>
 		<ArgumentTypeSet>
 			<EnumeratedArgumentType name="voltage_num_enum" baseType="/dt/uint8">
 				<EnumerationList>
-					<Enumeration label="PRIMARY" value="1" />
-					<Enumeration label="SECONDARY" value="2" />
-					<Enumeration label="BACKUP" value="3" />
+					<Enumeration label="PRIMARY" value="1" shortDescription="Primary voltage bus - main power source" />
+					<Enumeration label="SECONDARY" value="2" shortDescription="Secondary voltage bus - backup power source" />
+					<Enumeration label="BACKUP" value="3" shortDescription="Backup voltage bus - emergency power source" />
 				</EnumerationList>
 			</EnumeratedArgumentType>
 			<IntegerArgumentType name="voltage_num_uint8" baseType="/dt/uint8">

@@ -1,10 +1,5 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  input,
-  Input,
-  OnInit,
-} from '@angular/core';
+import { Component, input, Input, OnInit } from '@angular/core';
+import { MatDivider } from '@angular/material/divider';
 import { MatIcon } from '@angular/material/icon';
 import {
   MatMenu,
@@ -13,10 +8,7 @@ import {
   MatMenuTrigger,
 } from '@angular/material/menu';
 import { BehaviorSubject } from 'rxjs';
-import {
-  PreferenceStore,
-  StoredColumnInfo,
-} from '../../services/preference-store.service';
+import { Preferences } from '../../services/preferences.service';
 import { YaButton } from '../button/button.component';
 
 export interface YaColumnInfo {
@@ -25,13 +17,29 @@ export interface YaColumnInfo {
   visible?: boolean;
   alwaysVisible?: boolean;
   width?: string;
+
+  /**
+   * If set, the column is listed together with other columns of the
+   * same group, separated by dividers from other menu entries.
+   */
+  group?: string;
+}
+
+interface MenuEntry {
+  column: YaColumnInfo;
+  divider: boolean;
+}
+
+interface StoredColumnInfo {
+  id: string;
+  visible: boolean;
 }
 
 @Component({
   selector: 'ya-column-chooser',
   templateUrl: './column-chooser.component.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    MatDivider,
     MatMenu,
     MatMenuContent,
     MatMenuItem,
@@ -50,7 +58,9 @@ export class YaColumnChooser implements OnInit {
 
   displayedColumns$ = new BehaviorSubject<string[]>([]);
 
-  constructor(private preferenceStore: PreferenceStore) {}
+  menuEntries: MenuEntry[] = [];
+
+  constructor(private prefs: Preferences) {}
 
   ngOnInit() {
     this.recalculate(this.columns);
@@ -59,19 +69,51 @@ export class YaColumnChooser implements OnInit {
   recalculate(columns: YaColumnInfo[]) {
     this.columns = columns;
 
+    // Gather grouped columns at the position of the first column of their group
+    const ordered: YaColumnInfo[] = [];
+    const groupColumns = new Map<string, YaColumnInfo[]>();
+    for (const column of columns) {
+      if (column.alwaysVisible) {
+        continue;
+      }
+      if (column.group) {
+        let group = groupColumns.get(column.group);
+        if (!group) {
+          group = [];
+          groupColumns.set(column.group, group);
+          ordered.push(column);
+        }
+        group.push(column);
+      } else {
+        ordered.push(column);
+      }
+    }
+    this.menuEntries = [];
+    for (const column of ordered) {
+      const members = column.group ? groupColumns.get(column.group)! : [column];
+      for (const member of members) {
+        const prev = this.menuEntries[this.menuEntries.length - 1];
+        this.menuEntries.push({
+          column: member,
+          divider: !!prev && prev.column.group !== member.group,
+        });
+      }
+    }
+
     const preferenceKey = this.preferenceKey();
     const storedColumnsById = new Map<string, StoredColumnInfo>();
     if (preferenceKey) {
-      const storedColumnInfo =
-        this.preferenceStore.getStoredColumnInfo(preferenceKey);
-      const storedColumns = (storedColumnInfo || []).filter((el) => {
-        // Filter out unknown columns
+      let storedColumns = this.getStoredColumns(preferenceKey + '.cols');
+
+      // Filter out unknown columns
+      storedColumns = storedColumns.filter((el) => {
         for (const column of this.columns) {
           if (column.id === el.id) {
             return true;
           }
         }
       });
+
       for (const storedColumn of storedColumns) {
         storedColumnsById.set(storedColumn.id, storedColumn);
       }
@@ -91,6 +133,21 @@ export class YaColumnChooser implements OnInit {
     }
 
     this.displayedColumns$.next(displayedColumns);
+  }
+
+  private getStoredColumns(key: string): StoredColumnInfo[] {
+    const storedColumns = this.prefs.getObject<StoredColumnInfo[]>(key, []);
+    for (let i = 0; i < storedColumns.length; i++) {
+      const col = storedColumns[i];
+
+      // In previous versions the type was a string[] of visible
+      // columns. This has since been revised
+      if (typeof col === 'string') {
+        storedColumns[i] = { id: col, visible: true };
+      }
+    }
+
+    return storedColumns;
   }
 
   isVisible(column: YaColumnInfo) {
@@ -113,9 +170,9 @@ export class YaColumnChooser implements OnInit {
   }
 
   private writeValue(value: StoredColumnInfo[]) {
-    const preferenceKey = this.preferenceKey();
+    const preferenceKey = this.preferenceKey() + '.cols';
     if (preferenceKey) {
-      this.preferenceStore.setVisibleColumns(preferenceKey, value);
+      this.prefs.setObject(preferenceKey, value);
     }
     const visibleIds = value.filter((v) => v.visible).map((v) => v.id);
     this.displayedColumns$.next(visibleIds);

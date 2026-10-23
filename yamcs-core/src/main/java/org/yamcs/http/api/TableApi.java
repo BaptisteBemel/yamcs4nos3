@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.yamcs.api.Observer;
@@ -46,6 +47,7 @@ import org.yamcs.protobuf.Table.StreamData;
 import org.yamcs.protobuf.Table.StreamInfo;
 import org.yamcs.protobuf.Table.SubscribeStreamRequest;
 import org.yamcs.protobuf.Table.SubscribeStreamStatisticsRequest;
+import org.yamcs.protobuf.Table.SubscriberInfo;
 import org.yamcs.protobuf.Table.TableData;
 import org.yamcs.protobuf.Table.TableData.TableRecord;
 import org.yamcs.protobuf.Table.TableInfo;
@@ -91,9 +93,9 @@ import com.google.protobuf.MessageLite;
 import com.google.protobuf.Struct;
 
 public class TableApi extends AbstractTableApi<Context> {
-    private static final long MAX_NUM_ROWS = 2000;
-
     private static final Log log = new Log(TableApi.class);
+    private static final long MAX_NUM_ROWS = 2000;
+    private static final Pattern COLUMN_NAME_PATTERN = Pattern.compile("[A-Za-z0-9$_#.]+");
 
     @Override
     public void listStreams(Context ctx, ListStreamsRequest request, Observer<ListStreamsResponse> observer) {
@@ -235,6 +237,7 @@ public class TableApi extends AbstractTableApi<Context> {
         SqlBuilder sqlb = new SqlBuilder(table.getName());
 
         if (request.getColsCount() > 0) {
+            verifyColumns(request.getColsList());
             request.getColsList().forEach(col -> {
                 sqlb.select("?");
                 args.add(col);
@@ -268,10 +271,12 @@ public class TableApi extends AbstractTableApi<Context> {
         YarchDatabaseInstance ydb = DatabaseApi.verifyDatabase(request.getInstance());
 
         TableDefinition table = verifyTable(ydb, request.getTable());
+        verifyColumns(request.getColsList());
 
         SqlBuilder sqlb = new SqlBuilder(table.getName());
-        request.getColsList().forEach(col -> sqlb.select(col));
+        request.getColsList().forEach(col -> sqlb.select("\"" + col + "\""));
         if (request.hasQuery()) {
+            ctx.checkSystemPrivilege(SystemPrivilege.ControlArchiving);
             sqlb.where(request.getQuery());
         }
         String sql = sqlb.toString();
@@ -535,6 +540,14 @@ public class TableApi extends AbstractTableApi<Context> {
         }
     }
 
+    private void verifyColumns(List<String> cols) {
+        for (String col : cols) {
+            if (!COLUMN_NAME_PATTERN.matcher(col).matches()) {
+                throw new BadRequestException("Invalid column name '" + col + "'");
+            }
+        }
+    }
+
     private static class RowReader implements StreamSubscriber {
 
         Observer<Row> observer;
@@ -690,7 +703,12 @@ public class TableApi extends AbstractTableApi<Context> {
             }
         }
         for (var subscriber : stream.getSubscribers()) {
-            infob.addSubscribers(subscriber.getClass().getName() + "@" + Integer.toHexString(subscriber.hashCode()));
+            var subscriberInfo = SubscriberInfo.newBuilder().setClassName(subscriber.getClass().getName())
+                    .setHashCode(subscriber.hashCode());
+            if (subscriber.getDescription() != null) {
+                subscriberInfo.setDescription(subscriber.getDescription());
+            }
+            infob.addSubscribers(subscriberInfo.build());
         }
         return infob.build();
     }
